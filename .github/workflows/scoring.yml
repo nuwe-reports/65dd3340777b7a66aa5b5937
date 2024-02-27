@@ -1,0 +1,160 @@
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  sonarqube:
+    environment: SCORING
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      PERSONAL_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
+      PROJECT_ID: ${{ github.event.repository.name }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up JDK 11 
+        uses: actions/setup-java@v3
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+          
+      - name: Maven pre-config
+        if: always()
+        run: chmod +x mvnw
+      
+      - name: Build with Maven. No tests run
+        if: always()
+        run: ./mvnw clean verify -l phase0.out -fn
+      
+      - name: Phase 1. Test AppointmentControllerUnitTest  POST /appointment.
+        if: always()
+        run: ./mvnw test -Dtest="AppointmentControllerUnitTest" -l phase1.out -fn
+
+      - name: Phase 2. Test Entity and Controllers.
+        if: always()
+        run: ./mvnw test -Dtest="EntityUnitTest, DoctorControllerUnitTest, PatientControllerUnitTest, RoomControllerUnitTest" -l phase2.out -fn
+
+      - name: Phase 4-1 . Build Dockerfile.mysql image.
+        if: always()
+        run: docker build . --file Dockerfile.mysql --tag accwe-hospital:$(date +%s) 2>/dev/null; last=$?;res="FAILURE"; if [[ $last -eq 0 ]]; then res="SUCCESS";fi; echo $res > phase4-1.out
+
+      - name: Phase 4-2. Build Dockerfile.maven image.
+        if: always()
+        run: docker build . --file Dockerfile.maven --tag accwe-api:$(date +%s) 2>/dev/null; last=$?;res="FAILURE"; if [[ $last -eq 0 ]]; then res="SUCCESS";fi; echo $res > phase4-2.out
+
+      - uses: actions/setup-node@v3
+        if: always()
+        with:
+          node-version: 16
+
+      - name: Install xml-js
+        if: always()
+        run : npm install xml-js
+
+      - name: Update solution
+        if: always()
+        uses: actions/github-script@v6
+        with:
+          result-encoding: string
+          script: |
+  
+            const fs = require("fs");
+            const xmlParser = require("xml-js");
+
+            // Array Results
+            const assertionResults = [];
+
+            // Phase 1 file
+            try {
+              const file_p1 = fs.readFileSync("./phase1.out");
+              if (file_p1.toString().indexOf("[INFO] BUILD SUCCESS") > -1)
+                assertionResults.push(0); // Phase 1 == [0]
+            } catch (e) {
+              console.log("Error during Phase 1 loading");
+            }
+
+            // Phase 2 file
+            try {
+              const file_p2 = fs.readFileSync("./phase2.out");
+              if (file_p2.toString().indexOf("[INFO] BUILD SUCCESS") > -1)
+                assertionResults.push(1); // Phase 2 == [1]
+            } catch (e) {
+              console.log("Error during Phase 2 loading");
+            }
+
+            // Phase 3 Coverage >= 85 (Sonarqube)
+            let file_p3;
+
+            try {
+              file_p3 = fs.readFileSync("./target/site/jacoco/jacoco.xml");
+
+              const options = {
+                compact: true,
+                spaces: 2,
+                ignoreDeclaration: true,
+                ignoreComment: true,
+                ignoreCData: true,
+                ignoreDoctype: true,
+                ignoreText: true,
+                ignoreInstruction: true,
+              };
+
+              const asString = xmlParser.xml2json(file_p3, options);
+              const json = JSON.parse(asString);
+              const counters = json["report"]["counter"];
+              const missed = [];
+              const covered = [];
+
+              for (const attributename in counters) {
+                var attrs = counters[attributename]["_attributes"];
+                missed.push(Number(attrs["missed"]));
+                covered.push(Number(attrs["covered"]));
+              }
+
+              const totalMissed = missed.reduce((partialSum, a) => partialSum + a, 0);
+              const totalCovered = covered.reduce((partialSum, a) => partialSum + a, 0);
+              const percent = ((totalCovered - totalMissed) / totalCovered) * 100;
+
+              if (percent >= 90) assertionResults.push(2); // Phase 3 == [2]
+            } catch (e) {
+              console.log("Error during Phase 3 loading");
+            }
+
+            // Phase 4 file (Dockerfile.mysql)
+            try {
+              const file_p4_1 = fs.readFileSync("./phase4-1.out");
+              const file_p4_2 = fs.readFileSync("./phase4-2.out");
+
+              if (
+                file_p4_1.toString().indexOf("SUCCESS") > -1 &&
+                file_p4_2.toString().indexOf("SUCCESS") > -1
+              )
+                assertionResults.push(3); // Phase 4 == [3]
+            } catch (e) {
+              console.log("Error during Phase 4 loading");
+            }
+
+            console.log("Updating score...");
+
+            try {
+              await github.request(
+                `PATCH https://api.nuwe.io/projects/${process.env.PROJECT_ID}/objectives`,
+                {
+                  bearerToken: process.env.PERSONAL_TOKEN,
+                  assertionResults,
+                }
+              );
+
+              console.log("Done");
+            } catch (e) {
+              core.error("API connection error");
+              core.setFailed(e);
+            }
+
+      - name: SonarQube Scan 🚨 (Coverage Phase 3)
+        if: always()
+        run: ./mvnw clean verify test sonar:sonar -Dsonar.projectKey=${{github.event.repository.name}} -Dsonar.projectName=$PROJECT_ID -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.token=$SONAR_TOKEN   
