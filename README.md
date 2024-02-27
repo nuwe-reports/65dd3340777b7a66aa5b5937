@@ -1,1 +1,3 @@
 # java-template
+
+First commit!
