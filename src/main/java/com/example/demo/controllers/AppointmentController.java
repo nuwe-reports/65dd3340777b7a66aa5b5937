@@ -10,6 +10,7 @@ import java.util.Optional;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Sort;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -51,10 +52,28 @@ public class AppointmentController {
 
     @PostMapping("/appointment")
     public ResponseEntity<Appointment> createAppointment(@RequestBody Appointment app) {
+
+        if (!app.getFinishesAt().isAfter(app.getStartsAt())) {
+            return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
+        }
+
+        List<Appointment> appointments = appointmentRepository.findAll();
+
+        for (Appointment appointment : appointments) {
+            if (appointment.getRoom().getRoomName().equals(app.getRoom().getRoomName())) {
+                if (appointment.getStartsAt().isBefore(app.getFinishesAt())
+                        || appointment.getFinishesAt().isAfter(app.getStartsAt())
+                        || (appointment.getStartsAt().isAfter(app.getStartsAt())
+                                && appointment.getFinishesAt().isBefore(app.getFinishesAt()))) {
+                    return new ResponseEntity<>(HttpStatus.NOT_ACCEPTABLE);
+                }
+            }
+        }
+
         Appointment a = new Appointment(app.getPatient(), app.getDoctor(), app.getRoom(), app.getStartsAt(),
                 app.getFinishesAt());
         appointmentRepository.save(a);
-        return new ResponseEntity<>(a, HttpStatus.CREATED);
+        return new ResponseEntity<>(a, HttpStatus.OK);
     }
 
     @DeleteMapping("/appointments/{id}")
