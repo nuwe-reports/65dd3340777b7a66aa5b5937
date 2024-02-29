@@ -9,10 +9,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface AppointmentRepository extends JpaRepository<Appointment, Long> {
     List<Appointment> findAll();
-
     Appointment save(Appointment appointment);
-
     void delete(Appointment appointment);
-
-    
 }
