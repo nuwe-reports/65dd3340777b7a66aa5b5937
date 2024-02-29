@@ -60,13 +60,8 @@ public class AppointmentController {
         List<Appointment> appointments = appointmentRepository.findAll();
 
         for (Appointment appointment : appointments) {
-            if (appointment.getRoom().getRoomName().equals(app.getRoom().getRoomName())) {
-                if (appointment.getStartsAt().isBefore(app.getFinishesAt())
-                        || appointment.getFinishesAt().isAfter(app.getStartsAt())
-                        || (appointment.getStartsAt().isAfter(app.getStartsAt())
-                                && appointment.getFinishesAt().isBefore(app.getFinishesAt()))) {
-                    return new ResponseEntity<>(HttpStatus.NOT_ACCEPTABLE);
-                }
+            if (appointment.overlaps(app)) {
+                return new ResponseEntity<>(HttpStatus.NOT_ACCEPTABLE);
             }
         }
 
